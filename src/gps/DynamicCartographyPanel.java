@@ -6,6 +6,7 @@ import java.awt.Graphics2D;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Rectangle2D;
 
+import feature.StreetSegment;
 import geography.MapProjection;
 import gui.Cartographer;
 import gui.CartographyDocument;
@@ -23,6 +24,7 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
 
   private GPGGASentence current;
   private MapProjection projection;
+  private StreetSegment currentSegment;
 
   /**
    * Constructs a new DynamicCartographyPanel.
@@ -40,6 +42,28 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
     super(model, cartographer);
     this.projection = projection;
     this.current = null;
+    this.currentSegment = null;
+  }
+
+  /**
+   * Gets the current map-matched street segment.
+   *
+   * @return The current segment, or null if none is available yet
+   */
+  public StreetSegment getCurrentSegment()
+  {
+    return currentSegment;
+  }
+
+  /**
+   * Sets the current map-matched street segment.
+   *
+   * @param currentSegment
+   *          The current street segment
+   */
+  public void setCurrentSegment(final StreetSegment currentSegment)
+  {
+    this.currentSegment = currentSegment;
   }
 
   /**
