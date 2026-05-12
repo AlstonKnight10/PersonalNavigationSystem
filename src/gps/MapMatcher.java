@@ -3,7 +3,6 @@ package gps;
 import java.awt.Shape;
 import java.awt.geom.PathIterator;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -14,17 +13,17 @@ import feature.StreetSegment;
 import gui.CartographyDocument;
 
 /**
- * Snaps projected points to road geometry.
+ * Snaps projected points to the nearest street segment.
  */
 public class MapMatcher
 {
   private static final double DEFAULT_CELL_SIZE_KM = 0.25;
   private static final int DEFAULT_MAX_EXPANSION_RINGS = 8;
 
-  private List<LineSegment2D> roadSegments;
-  private Map<Long, List<Integer>> grid;
-  private double cellSizeKm;
-  private int maxExpansionRings;
+  private final List<LineSegment2D> roadSegments;
+  private final Map<Long, List<Integer>> grid;
+  private final double cellSizeKm;
+  private final int maxExpansionRings;
   private StreetSegment currentSegment;
 
   /**
@@ -70,18 +69,6 @@ public class MapMatcher
     this.maxExpansionRings = maxExpansionRings;
     this.currentSegment = null;
 
-    this.activeRoute = Collections.emptyList();
-    this.activeRouteIDs = Collections.emptySet();
-    this.currentRouteIndex = -1;
-    this.routeLockEnabled = false;
-    this.offRouteFixCount = 0;
-    this.pendingTurnIndex = -1;
-    this.pendingTurnFixCount = 0;
-    this.previousMatchedPoint = null;
-    this.lastMatchedPoint = null;
-    this.fixCounter = 0L;
-    this.currentSegment = null;
-
     for (StreetSegment segment : document)
     {
       addShapeSegments(segment.getGeographicShape().getShape(), segment);
@@ -89,13 +76,33 @@ public class MapMatcher
   }
 
   /**
-   * Gets the segment from the most recent snap result.
+   * Gets the segment from the most recent match result.
    *
    * @return currently matched segment, or null if unavailable
    */
   public StreetSegment getCurrentSegment()
   {
     return currentSegment;
+  }
+
+  /**
+   * Compatibility no-op for code paths that provide route context.
+   *
+   * @param route ignored
+   */
+  public void setActiveRoute(final List<StreetSegment> route)
+  {
+    // Intentionally ignored in this simplified matcher version.
+  }
+
+  /**
+   * Compatibility method for diagnostics in caller code.
+   *
+   * @return false for this simplified matcher version
+   */
+  public boolean isRouteLockEnabled()
+  {
+    return false;
   }
 
   /**
@@ -127,388 +134,19 @@ public class MapMatcher
     if (roadSegments.isEmpty())
     {
       currentSegment = null;
-      return new double[] {point[0], point[1]};
+      return new MapMatchResult(new double[] {point[0], point[1]}, null, Double.POSITIVE_INFINITY);
     }
 
-    fixCounter++;
-
-    if (!activeRoute.isEmpty() && routeLockEnabled)
-    {
-      MapMatchResult routeMatched = matchOnRoute(point[0], point[1]);
-      if (routeMatched != null)
-      {
-        return remember(routeMatched);
-      }
-    }
-
-    MapMatchResult fallback = matchAgainstGlobal(point[0], point[1]);
-    attemptRelock(fallback);
-    updateMatchedPointHistory(fallback.getPoint());
-
-    if (shouldLog())
-    {
-      String id = (fallback.getSegment() == null) ? "null" : fallback.getSegment().getID();
-      log("Fallback match used: seg=" + id + " distKm=" + fallback.getDistanceKm()
-          + " lock=" + routeLockEnabled + " routeIdx=" + currentRouteIndex + " offCount="
-          + offRouteFixCount);
-    }
-
-    return remember(fallback);
-  }
-
-  /**
-   * Gets the segment from the most recent match result.
-   *
-   * @return currently matched segment, or null if unavailable
-   */
-  public StreetSegment getCurrentSegment()
-  {
-    return currentSegment;
-  }
-
-  private MapMatchResult remember(final MapMatchResult result)
-  {
-    currentSegment = (result == null) ? null : result.getSegment();
-    return result;
-  }
-
-  private MapMatchResult matchOnRoute(final double px, final double py)
-  {
-    RouteCandidate best = null;
-    RouteCandidate currentCandidate = null;
-    RouteCandidate nextCandidate = null;
-
-    int startIndex;
-    int endIndex;
-
-    if (currentRouteIndex < 0)
-    {
-      startIndex = 0;
-      endIndex = activeRoute.size() - 1;
-    }
-    else
-    {
-      startIndex = Math.max(0, currentRouteIndex - ROUTE_WINDOW_BACK);
-      endIndex = Math.min(activeRoute.size() - 1, currentRouteIndex + ROUTE_WINDOW_FORWARD);
-    }
-
-    for (int i = startIndex; i <= endIndex; i++)
-    {
-      RouteCandidate candidate = activeRoute.get(i).match(px, py, i);
-      if (candidate == null)
-      {
-        continue;
-      }
-
-      if (i == currentRouteIndex)
-      {
-        currentCandidate = candidate;
-      }
-      else if ((currentRouteIndex >= 0) && (i == currentRouteIndex + 1))
-      {
-        nextCandidate = candidate;
-      }
-
-      if ((best == null) || (candidate.distanceKm < best.distanceKm))
-      {
-        best = candidate;
-      }
-
-    }
-
-    RouteCandidate selected = selectRouteCandidate(currentCandidate, nextCandidate, best);
-
-    if (selected == null)
-    {
-      if (shouldLog())
-      {
-        log("No route candidate: lock=" + routeLockEnabled + " routeIdx=" + currentRouteIndex);
-      }
-      return null;
-    }
-
-    if (selected.distanceKm > HARD_OFF_ROUTE_DISTANCE_KM)
-    {
-      offRouteFixCount++;
-      if (offRouteFixCount >= HARD_OFF_ROUTE_FIX_COUNT)
-      {
-        routeLockEnabled = false;
-        pendingTurnIndex = -1;
-        pendingTurnFixCount = 0;
-        log("Route lock disabled: distKm=" + selected.distanceKm + " offCount=" + offRouteFixCount);
-        return null;
-      }
-    }
-    else
-    {
-      offRouteFixCount = 0;
-    }
-
-    currentRouteIndex = selected.routeIndex;
-    updateMatchedPointHistory(selected.point);
-
-    if (shouldLog())
-    {
-      log("Route match: seg=" + selected.segment.getID() + " idx=" + selected.routeIndex
-          + " distKm=" + selected.distanceKm + " endKm=" + selected.distanceToEndKm
-          + " pendingTurnIdx=" + pendingTurnIndex + " pendingFixes=" + pendingTurnFixCount
-          + " offCount=" + offRouteFixCount);
-    }
-
-    return new MapMatchResult(selected.point, selected.segment, selected.distanceKm);
-  }
-
-  private RouteCandidate selectRouteCandidate(final RouteCandidate currentCandidate,
-      final RouteCandidate nextCandidate, final RouteCandidate best)
-  {
-    if (currentRouteIndex < 0)
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        String bestID = (best == null || best.segment == null) ? "null" : best.segment.getID();
-        log("Selecting initial route candidate: idx=-1 bestSeg=" + bestID);
-      }
-      return best;
-    }
-
-    if (currentCandidate == null)
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Current route segment unavailable; considering next only");
-      }
-      return nextCandidate;
-    }
-
-    if (currentCandidate.distanceToEndKm > INTERSECTION_ZONE_KM)
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Stay current (not in intersection zone): currentSeg=" + currentCandidate.segment.getID()
-            + " endKm=" + currentCandidate.distanceToEndKm);
-      }
-      return currentCandidate;
-    }
-
-    if (nextCandidate == null)
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Stay current (no next candidate): currentSeg=" + currentCandidate.segment.getID());
-      }
-      return currentCandidate;
-    }
-
-    if (!isTransitionAllowed(currentRouteIndex, currentRouteIndex + 1, currentCandidate))
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Stay current (turn gate blocked): currentSeg=" + currentCandidate.segment.getID()
-            + " nextSeg=" + nextCandidate.segment.getID() + " endKm="
-            + currentCandidate.distanceToEndKm);
-      }
-      return currentCandidate;
-    }
-
-    if (!headingSupportsTurn(currentCandidate, nextCandidate))
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Stay current (heading rejected): currentSeg=" + currentCandidate.segment.getID()
-            + " nextSeg=" + nextCandidate.segment.getID());
-      }
-      return currentCandidate;
-    }
-
-    if ((currentCandidate.distanceKm - nextCandidate.distanceKm) < TURN_DISTANCE_GAIN_KM)
-    {
-      pendingTurnIndex = -1;
-      pendingTurnFixCount = 0;
-      if (shouldLog())
-      {
-        log("Stay current (distance gain too small): currentDist=" + currentCandidate.distanceKm
-            + " nextDist=" + nextCandidate.distanceKm + " gain="
-            + (currentCandidate.distanceKm - nextCandidate.distanceKm));
-      }
-      return currentCandidate;
-    }
-
-    if (pendingTurnIndex != nextCandidate.routeIndex)
-    {
-      pendingTurnIndex = nextCandidate.routeIndex;
-      pendingTurnFixCount = 1;
-      if (shouldLog())
-      {
-        log("Turn pending started: fromIdx=" + currentRouteIndex + " toIdx=" + nextCandidate.routeIndex);
-      }
-      return currentCandidate;
-    }
-
-    pendingTurnFixCount++;
-    if (pendingTurnFixCount < TURN_COMMIT_FIX_COUNT)
-    {
-      if (shouldLog())
-      {
-        log("Turn pending progress: toIdx=" + pendingTurnIndex + " fixes=" + pendingTurnFixCount
-            + "/" + TURN_COMMIT_FIX_COUNT);
-      }
-      return currentCandidate;
-    }
-
-    pendingTurnIndex = -1;
-    pendingTurnFixCount = 0;
-    log("Turn committed: newIdx=" + nextCandidate.routeIndex + " seg=" + nextCandidate.segment.getID());
-    return nextCandidate;
-  }
-
-  private boolean headingSupportsTurn(final RouteCandidate currentCandidate,
-      final RouteCandidate nextCandidate)
-  {
-    if (currentCandidate == null || nextCandidate == null)
-    {
-      return false;
-    }
-
-    double routeDot = currentCandidate.dirX * nextCandidate.dirX
-        + currentCandidate.dirY * nextCandidate.dirY;
-
-    if (routeDot >= 0.85)
-    {
-      return true;
-    }
-
-    if (previousMatchedPoint == null || lastMatchedPoint == null)
-    {
-      return false;
-    }
-
-    double headingX = lastMatchedPoint[0] - previousMatchedPoint[0];
-    double headingY = lastMatchedPoint[1] - previousMatchedPoint[1];
-    double headingLength = Math.sqrt(headingX * headingX + headingY * headingY);
-
-    if (headingLength < MIN_HEADING_MOVEMENT_KM)
-    {
-      return false;
-    }
-
-    headingX /= headingLength;
-    headingY /= headingLength;
-
-    double cosCurrent = headingX * currentCandidate.dirX + headingY * currentCandidate.dirY;
-    double cosNext = headingX * nextCandidate.dirX + headingY * nextCandidate.dirY;
-
-    return (cosNext >= HEADING_MIN_COS) && (cosNext >= cosCurrent + HEADING_ADVANTAGE_COS);
-  }
-
-  private void updateMatchedPointHistory(final double[] point)
-  {
-    if (point == null || point.length != 2)
-    {
-      return;
-    }
-
-    if (lastMatchedPoint == null)
-    {
-      lastMatchedPoint = new double[] {point[0], point[1]};
-      return;
-    }
-
-    previousMatchedPoint = lastMatchedPoint;
-    lastMatchedPoint = new double[] {point[0], point[1]};
-  }
-
-  private boolean isTransitionAllowed(final int currentIndex, final int candidateIndex,
-      final RouteCandidate currentCandidate)
-  {
-    if (currentCandidate == null)
-    {
-      return false;
-    }
-
-    if (candidateIndex > currentIndex)
-    {
-      double gate = TURN_GATE_DISTANCE_KM * (candidateIndex - currentIndex);
-      return currentCandidate.distanceToEndKm <= gate;
-    }
-    else if (candidateIndex < currentIndex)
-    {
-      double gate = TURN_GATE_DISTANCE_KM * (currentIndex - candidateIndex);
-      return currentCandidate.alongKm <= gate;
-    }
-
-    return true;
-  }
-
-  private void attemptRelock(final MapMatchResult fallback)
-  {
-    if (activeRoute.isEmpty() || fallback == null || fallback.getSegment() == null)
-    {
-      return;
-    }
-
-    if (fallback.getDistanceKm() > RELOCK_DISTANCE_KM)
-    {
-      return;
-    }
-
-    String id = fallback.getSegment().getID();
-    if (!activeRouteIDs.contains(id))
-    {
-      return;
-    }
-
-    for (int i = 0; i < activeRoute.size(); i++)
-    {
-      if (id.equals(activeRoute.get(i).segment.getID()))
-      {
-        currentRouteIndex = i;
-        routeLockEnabled = true;
-        offRouteFixCount = 0;
-        pendingTurnIndex = -1;
-        pendingTurnFixCount = 0;
-        log("Route lock re-enabled on segment=" + id + " idx=" + i);
-        return;
-      }
-    }
-  }
-
-  private boolean shouldLog()
-  {
-    return DEBUG_LOGGING && ((fixCounter % DEBUG_LOG_EVERY_N_FIXES) == 0);
-  }
-
-  private void log(final String message)
-  {
-    if (DEBUG_LOGGING)
-    {
-      System.out.println("[MapMatcher] " + message);
-    }
-  }
-
-  private MapMatchResult matchAgainstGlobal(final double px, final double py)
-  {
-    int cellX = toCell(px);
-    int cellY = toCell(py);
+    int cellX = toCell(point[0]);
+    int cellY = toCell(point[1]);
 
     Set<Integer> candidateIndexes = collectCandidateIndexes(cellX, cellY);
     if (candidateIndexes.isEmpty())
     {
-      return matchAgainstAll(px, py);
+      return matchAgainstAll(point[0], point[1]);
     }
 
-    return matchAgainstCandidates(px, py, candidateIndexes);
+    return matchAgainstCandidates(point[0], point[1], candidateIndexes);
   }
 
   private MapMatchResult matchAgainstAll(final double px, final double py)
@@ -519,8 +157,12 @@ public class MapMatcher
 
     for (LineSegment2D segment : roadSegments)
     {
-      CandidateMatch current = evaluateCandidate(segment, px, py);
-      if ((best == null) || (current.distanceKm < best.distanceKm))
+      double[] candidate = segment.closestPoint(px, py);
+      double dx = candidate[0] - px;
+      double dy = candidate[1] - py;
+      double distanceSquared = dx * dx + dy * dy;
+
+      if (distanceSquared < bestDistanceSquared)
       {
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
@@ -529,8 +171,7 @@ public class MapMatcher
     }
 
     currentSegment = bestSegment;
-
-    return bestPoint;
+    return new MapMatchResult(bestPoint, bestSegment, Math.sqrt(bestDistanceSquared));
   }
 
   private MapMatchResult matchAgainstCandidates(final double px, final double py,
@@ -543,8 +184,12 @@ public class MapMatcher
     for (Integer index : candidateIndexes)
     {
       LineSegment2D segment = roadSegments.get(index.intValue());
-      CandidateMatch current = evaluateCandidate(segment, px, py);
-      if ((best == null) || (current.distanceKm < best.distanceKm))
+      double[] candidate = segment.closestPoint(px, py);
+      double dx = candidate[0] - px;
+      double dy = candidate[1] - py;
+      double distanceSquared = dx * dx + dy * dy;
+
+      if (distanceSquared < bestDistanceSquared)
       {
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
@@ -553,8 +198,7 @@ public class MapMatcher
     }
 
     currentSegment = bestSegment;
-
-    return bestPoint;
+    return new MapMatchResult(bestPoint, bestSegment, Math.sqrt(bestDistanceSquared));
   }
 
   private Set<Integer> collectCandidateIndexes(final int centerX, final int centerY)
@@ -567,9 +211,7 @@ public class MapMatcher
       candidates.addAll(center);
     }
 
-    int firstFoundRing = -1;
-
-    for (int ring = 1; ring <= maxExpansionRings; ring++)
+    for (int ring = 1; (ring <= maxExpansionRings) && candidates.isEmpty(); ring++)
     {
       int minX = centerX - ring;
       int maxX = centerX + ring;
@@ -586,18 +228,6 @@ public class MapMatcher
       {
         addCellCandidates(candidates, minX, y);
         addCellCandidates(candidates, maxX, y);
-      }
-
-      if (!candidates.isEmpty())
-      {
-        if (firstFoundRing < 0)
-        {
-          firstFoundRing = ring;
-        }
-        else if (ring >= firstFoundRing + 1)
-        {
-          break;
-        }
       }
     }
 
@@ -714,7 +344,7 @@ public class MapMatcher
       this.owner = owner;
     }
 
-    private ClosestPoint closestPoint(final double px, final double py)
+    private double[] closestPoint(final double px, final double py)
     {
       double abx = bx - ax;
       double aby = by - ay;
@@ -722,9 +352,7 @@ public class MapMatcher
 
       if (abLengthSquared == 0.0)
       {
-        double dx = ax - px;
-        double dy = ay - py;
-        return new ClosestPoint(new double[] {ax, ay}, 0.0, Math.sqrt(dx * dx + dy * dy));
+        return new double[] {ax, ay};
       }
 
       double apx = px - ax;
@@ -740,202 +368,7 @@ public class MapMatcher
         t = 1.0;
       }
 
-      double cx = ax + t * abx;
-      double cy = ay + t * aby;
-      double dx = cx - px;
-      double dy = cy - py;
-
-      return new ClosestPoint(new double[] {cx, cy}, t, Math.sqrt(dx * dx + dy * dy));
-    }
-
-    private double length()
-    {
-      double dx = bx - ax;
-      double dy = by - ay;
-      return Math.sqrt(dx * dx + dy * dy);
-    }
-  }
-
-  private static class ClosestPoint
-  {
-    private final double[] point;
-    private final double t;
-    private final double distanceKm;
-
-    private ClosestPoint(final double[] point, final double t, final double distanceKm)
-    {
-      this.point = point;
-      this.t = t;
-      this.distanceKm = distanceKm;
-    }
-  }
-
-  private static class CandidateMatch
-  {
-    private final double[] point;
-    private final StreetSegment segment;
-    private final double distanceKm;
-
-    private CandidateMatch(final double[] point, final StreetSegment segment, final double distanceKm)
-    {
-      this.point = point;
-      this.segment = segment;
-      this.distanceKm = distanceKm;
-    }
-  }
-
-  private static class RouteSegmentMatcher
-  {
-    private final StreetSegment segment;
-    private final List<RouteLinePiece> pieces;
-    private final double totalLengthKm;
-
-    private RouteSegmentMatcher(final StreetSegment segment, final List<RouteLinePiece> pieces,
-        final double totalLengthKm)
-    {
-      this.segment = segment;
-      this.pieces = pieces;
-      this.totalLengthKm = totalLengthKm;
-    }
-
-    private static RouteSegmentMatcher fromSegment(final StreetSegment segment)
-    {
-      Shape shape = segment.getGeographicShape().getShape();
-      PathIterator iterator = shape.getPathIterator(null);
-      double[] coords = new double[6];
-
-      List<RouteLinePiece> pieces = new ArrayList<RouteLinePiece>();
-      double total = 0.0;
-
-      double startX = 0.0;
-      double startY = 0.0;
-      double lastX = 0.0;
-      double lastY = 0.0;
-      boolean hasLast = false;
-
-      while (!iterator.isDone())
-      {
-        int type = iterator.currentSegment(coords);
-
-        if (type == PathIterator.SEG_MOVETO)
-        {
-          startX = coords[0];
-          startY = coords[1];
-          lastX = coords[0];
-          lastY = coords[1];
-          hasLast = true;
-        }
-        else if (type == PathIterator.SEG_LINETO)
-        {
-          if (hasLast)
-          {
-            LineSegment2D line = new LineSegment2D(lastX, lastY, coords[0], coords[1], segment);
-            double len = line.length();
-            if (len > 0.0)
-            {
-              pieces.add(new RouteLinePiece(line, total, len));
-              total += len;
-            }
-          }
-          lastX = coords[0];
-          lastY = coords[1];
-          hasLast = true;
-        }
-        else if (type == PathIterator.SEG_CLOSE)
-        {
-          if (hasLast)
-          {
-            LineSegment2D line = new LineSegment2D(lastX, lastY, startX, startY, segment);
-            double len = line.length();
-            if (len > 0.0)
-            {
-              pieces.add(new RouteLinePiece(line, total, len));
-              total += len;
-            }
-          }
-        }
-
-        iterator.next();
-      }
-
-      if (pieces.isEmpty())
-      {
-        return null;
-      }
-
-      return new RouteSegmentMatcher(segment, pieces, total);
-    }
-
-    private RouteCandidate match(final double px, final double py, final int routeIndex)
-    {
-      RouteCandidate best = null;
-
-      for (RouteLinePiece piece : pieces)
-      {
-        ClosestPoint cp = piece.line.closestPoint(px, py);
-        double alongKm = piece.startOffsetKm + cp.t * piece.lengthKm;
-        double distanceToEndKm = Math.max(0.0, totalLengthKm - alongKm);
-
-        double dirX = piece.line.bx - piece.line.ax;
-        double dirY = piece.line.by - piece.line.ay;
-        double dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
-        if (dirLength > 0.0)
-        {
-          dirX /= dirLength;
-          dirY /= dirLength;
-        }
-
-        RouteCandidate current = new RouteCandidate(cp.point, segment, routeIndex, cp.distanceKm,
-            alongKm, distanceToEndKm, dirX, dirY);
-
-        if ((best == null) || (current.distanceKm < best.distanceKm))
-        {
-          best = current;
-        }
-      }
-
-      return best;
-    }
-  }
-
-  private static class RouteLinePiece
-  {
-    private final LineSegment2D line;
-    private final double startOffsetKm;
-    private final double lengthKm;
-
-    private RouteLinePiece(final LineSegment2D line, final double startOffsetKm,
-        final double lengthKm)
-    {
-      this.line = line;
-      this.startOffsetKm = startOffsetKm;
-      this.lengthKm = lengthKm;
-    }
-  }
-
-  private static class RouteCandidate
-  {
-    private final double[] point;
-    private final StreetSegment segment;
-    private final int routeIndex;
-    private final double distanceKm;
-    private final double alongKm;
-    private final double distanceToEndKm;
-    private final double dirX;
-    private final double dirY;
-
-    private RouteCandidate(final double[] point, final StreetSegment segment, final int routeIndex,
-        final double distanceKm, final double alongKm, final double distanceToEndKm,
-        final double dirX, final double dirY)
-    {
-      this.point = point;
-      this.segment = segment;
-      this.routeIndex = routeIndex;
-      this.distanceKm = distanceKm;
-      this.alongKm = alongKm;
-      this.distanceToEndKm = distanceToEndKm;
-      this.dirX = dirX;
-      this.dirY = dirY;
+      return new double[] {ax + t * abx, ay + t * aby};
     }
   }
 
