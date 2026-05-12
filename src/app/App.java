@@ -43,6 +43,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
 
   private Map<String, StreetSegment> currentPath;
   private RouteRecalculator routeRecalculator;
+  private MapMatcher matcher;
 
   /**
    * Handle actionPerformed() messages.
@@ -133,6 +134,11 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       return;
     }
 
+    if (matcher != null)
+    {
+      matcher.setActiveRoute(Collections.<StreetSegment>emptyList());
+    }
+
     PermanentLabelManager labels = new PermanentLabelBuckets(network.size());
     alg = new LabelSettingAlgorithm(labels);
 
@@ -169,6 +175,15 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
         {
           currentPath = task.get();
           routeRecalculator.setCurrentPath(currentPath);
+
+          if (matcher != null)
+          {
+            List<StreetSegment> orderedPath = buildOrderedPath(currentPath, panel.getCurrentSegment(),
+                destinationSegment);
+            matcher.setActiveRoute(orderedPath);
+            System.out.println("[App] Route path size=" + currentPath.size() + " ordered="
+                + orderedPath.size() + " lock=" + matcher.isRouteLockEnabled());
+          }
 
           document.setHighlighted(currentPath);
           panel.repaint();
@@ -207,7 +222,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       network = StreetNetwork.createStreetNetwork(streets);
       routeRecalculator = new RouteRecalculator();
 
-      MapMatcher matcher = new MapMatcher(document);
+      matcher = new MapMatcher(document);
 
       panel = new DynamicCartographyPanel<StreetSegment>(document, new StreetSegmentCartographer(),
           proj, matcher);
@@ -273,7 +288,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
 
       // Use GPS simulator for testing instead.
       GPSSimulator gpsSim = new GPSSimulator("rockingham.gps");
-      gpsSim.setDelay(10);
+      gpsSim.setDelay(20);
 
       InputStream is = gpsSim.getInputStream();
 
@@ -330,8 +345,124 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       {
         destinationSegment = highlighted.get(segmentIDs.get(0));
         routeRecalculator.setDestinationSegment(destinationSegment);
+        if (matcher != null)
+        {
+          matcher.setActiveRoute(Collections.<StreetSegment>emptyList());
+          System.out.println("[App] Destination changed. Cleared active route lock.");
+        }
         System.out.println("Destination: " + destinationSegment);
       }
     }
+  }
+
+  private List<StreetSegment> buildOrderedPath(final Map<String, StreetSegment> path,
+      final StreetSegment originSegment, final StreetSegment destinationSegment)
+  {
+    List<StreetSegment> ordered = new ArrayList<StreetSegment>();
+
+    if (path == null || path.isEmpty())
+    {
+      return ordered;
+    }
+
+    Map<Integer, List<StreetSegment>> byTail = new HashMap<Integer, List<StreetSegment>>();
+    Set<String> pathIDs = new HashSet<String>();
+
+    for (StreetSegment segment : path.values())
+    {
+      if (segment == null)
+      {
+        continue;
+      }
+
+      pathIDs.add(segment.getID());
+      List<StreetSegment> outgoing = byTail.get(segment.getTail());
+      if (outgoing == null)
+      {
+        outgoing = new ArrayList<StreetSegment>();
+        byTail.put(segment.getTail(), outgoing);
+      }
+      outgoing.add(segment);
+    }
+
+    StreetSegment start = null;
+    if (originSegment != null)
+    {
+      List<StreetSegment> outgoing = byTail.get(originSegment.getHead());
+      if (outgoing != null && !outgoing.isEmpty())
+      {
+        start = outgoing.get(0);
+      }
+    }
+
+    if (start == null)
+    {
+      for (StreetSegment candidate : path.values())
+      {
+        if (candidate == null)
+        {
+          continue;
+        }
+
+        boolean hasPredecessor = false;
+        for (StreetSegment other : path.values())
+        {
+          if (other != null && other.getHead() == candidate.getTail())
+          {
+            hasPredecessor = true;
+            break;
+          }
+        }
+
+        if (!hasPredecessor)
+        {
+          start = candidate;
+          break;
+        }
+      }
+    }
+
+    if (start == null)
+    {
+      start = path.values().iterator().next();
+    }
+
+    StreetSegment current = start;
+    Set<String> visited = new HashSet<String>();
+
+    while (current != null && !visited.contains(current.getID()) && pathIDs.contains(current.getID()))
+    {
+      ordered.add(current);
+      visited.add(current.getID());
+
+      if (destinationSegment != null && current.getID().equals(destinationSegment.getID()))
+      {
+        break;
+      }
+
+      List<StreetSegment> outgoing = byTail.get(current.getHead());
+      StreetSegment next = null;
+
+      if (outgoing != null)
+      {
+        for (StreetSegment candidate : outgoing)
+        {
+          if (candidate != null && !visited.contains(candidate.getID()))
+          {
+            next = candidate;
+            break;
+          }
+        }
+      }
+
+      current = next;
+    }
+
+    if (ordered.isEmpty())
+    {
+      ordered.addAll(path.values());
+    }
+
+    return ordered;
   }
 }

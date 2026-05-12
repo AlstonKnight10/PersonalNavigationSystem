@@ -107,11 +107,14 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
             current.getLatitude()});
         if (mapMatcher != null)
         {
-          currentProjected = mapMatcher.snap(projected);
+          MapMatcher.MapMatchResult result = mapMatcher.match(projected);
+          currentProjected = result.getPoint();
+          currentSegment = result.getSegment();
         }
         else
         {
           currentProjected = projected;
+          currentSegment = null;
         }
         repaint();
       }
