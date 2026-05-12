@@ -6,6 +6,6 @@
 			<attribute name="module" value="true"/>
 		</attributes>
 	</classpathentry>
-	<classpathentry kind="lib" path="/home/aknight/Documents/CS480/PersonalNavigationSystem/lib/jSerialComm-2.11.4.jar"/>
+	<classpathentry kind="lib" path="/home/eclypse/Dev/PersonalNavigationSystem/lib/jSerialComm-2.11.4.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
