@@ -24,6 +24,7 @@ public class MapMatcher
   private Map<Long, List<Integer>> grid;
   private double cellSizeKm;
   private int maxExpansionRings;
+  private StreetSegment currentSegment;
 
   /**
    * Constructs a matcher from all street-segment geometry in the document.
@@ -66,11 +67,22 @@ public class MapMatcher
     this.grid = new HashMap<Long, List<Integer>>();
     this.cellSizeKm = cellSizeKm;
     this.maxExpansionRings = maxExpansionRings;
+    this.currentSegment = null;
 
     for (StreetSegment segment : document)
     {
-      addShapeSegments(segment.getGeographicShape().getShape());
+      addShapeSegments(segment.getGeographicShape().getShape(), segment);
     }
+  }
+
+  /**
+   * Gets the segment from the most recent snap result.
+   *
+   * @return currently matched segment, or null if unavailable
+   */
+  public StreetSegment getCurrentSegment()
+  {
+    return currentSegment;
   }
 
   /**
@@ -89,6 +101,7 @@ public class MapMatcher
 
     if (roadSegments.isEmpty())
     {
+      currentSegment = null;
       return new double[] {point[0], point[1]};
     }
 
@@ -108,6 +121,7 @@ public class MapMatcher
   {
     double bestDistanceSquared = Double.POSITIVE_INFINITY;
     double[] bestPoint = new double[] {px, py};
+    StreetSegment bestSegment = null;
 
     for (LineSegment2D segment : roadSegments)
     {
@@ -120,8 +134,11 @@ public class MapMatcher
       {
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
+        bestSegment = segment.owner;
       }
     }
+
+    currentSegment = bestSegment;
 
     return bestPoint;
   }
@@ -131,6 +148,7 @@ public class MapMatcher
   {
     double bestDistanceSquared = Double.POSITIVE_INFINITY;
     double[] bestPoint = new double[] {px, py};
+    StreetSegment bestSegment = null;
 
     for (Integer index : candidateIndexes)
     {
@@ -144,8 +162,11 @@ public class MapMatcher
       {
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
+        bestSegment = segment.owner;
       }
     }
+
+    currentSegment = bestSegment;
 
     return bestPoint;
   }
@@ -192,7 +213,7 @@ public class MapMatcher
     }
   }
 
-  private void addShapeSegments(final Shape shape)
+  private void addShapeSegments(final Shape shape, final StreetSegment owner)
   {
     PathIterator iterator = shape.getPathIterator(null);
     double[] coords = new double[6];
@@ -219,7 +240,7 @@ public class MapMatcher
       {
         if (hasLast)
         {
-          addRoadSegment(lastX, lastY, coords[0], coords[1]);
+          addRoadSegment(lastX, lastY, coords[0], coords[1], owner);
         }
         lastX = coords[0];
         lastY = coords[1];
@@ -229,7 +250,7 @@ public class MapMatcher
       {
         if (hasLast)
         {
-          addRoadSegment(lastX, lastY, startX, startY);
+          addRoadSegment(lastX, lastY, startX, startY, owner);
         }
       }
 
@@ -237,9 +258,10 @@ public class MapMatcher
     }
   }
 
-  private void addRoadSegment(final double ax, final double ay, final double bx, final double by)
+  private void addRoadSegment(final double ax, final double ay, final double bx, final double by,
+      final StreetSegment owner)
   {
-    LineSegment2D segment = new LineSegment2D(ax, ay, bx, by);
+    LineSegment2D segment = new LineSegment2D(ax, ay, bx, by, owner);
     int index = roadSegments.size();
     roadSegments.add(segment);
 
@@ -280,13 +302,16 @@ public class MapMatcher
     private final double ay;
     private final double bx;
     private final double by;
+    private final StreetSegment owner;
 
-    private LineSegment2D(final double ax, final double ay, final double bx, final double by)
+    private LineSegment2D(final double ax, final double ay, final double bx, final double by,
+        final StreetSegment owner)
     {
       this.ax = ax;
       this.ay = ay;
       this.bx = bx;
       this.by = by;
+      this.owner = owner;
     }
 
     private double[] closestPoint(final double px, final double py)
