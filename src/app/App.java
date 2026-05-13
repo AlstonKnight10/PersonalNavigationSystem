@@ -26,6 +26,8 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
 {
   private static final int SET_DESTINATION = 0;
 
+  private static final boolean DEBUG = false;
+
   private static final String CALCULATE = "Calculate";
   private static final String DESTINATION = "Destination";
   private static final String EMPTY_ROUTE_MESSAGE = "[App] Cleared active route lock.";
@@ -108,13 +110,13 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       AbstractMapProjection proj = new ConicalEqualAreaProjection(-96.0, 37.5, 29.5, 45.5);
       GeographicShapesReader gsReader = new GeographicShapesReader(isgeo, proj);
       CartographyDocument<GeographicShape> geographicShapes = gsReader.read();
-      System.out.println("Read the .geo file");
+      debug("Read the .geo file");
 
       InputStream iss = new FileInputStream(new File("rockingham-streets-2024.str"));
       StreetsReader sReader = new StreetsReader(iss, geographicShapes);
       Map<String, Street> streets = new HashMap<String, Street>();
       document = sReader.read(streets);
-      System.out.println("Read the .str file");
+      debug("Read the .str file");
 
       network = StreetNetwork.createStreetNetwork(streets);
       routeRecalculator = new RouteRecalculator();
@@ -158,7 +160,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       destinationSegment = highlighted.get(segmentIDs.get(0));
       routeRecalculator.setDestinationSegment(destinationSegment);
       clearActiveRoute();
-      System.out.println("Destination: " + destinationSegment);
+      debug("Destination: " + destinationSegment);
     }
   }
 
@@ -213,8 +215,8 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
       dialog.setVisible(false);
     }
 
-    BackgroundTaskDialog<Map<String, StreetSegment>, String> btd =
-        new BackgroundTaskDialog<>(frame, "Calculating...", task);
+    BackgroundTaskDialog<Map<String, StreetSegment>, String> btd = new BackgroundTaskDialog<>(frame,
+        "Calculating...", task);
 
     btd.execute();
   }
@@ -227,7 +229,21 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
     if (matcher != null)
     {
       matcher.setActiveRoute(Collections.<StreetSegment> emptyList());
-      System.out.println(EMPTY_ROUTE_MESSAGE);
+      debug(EMPTY_ROUTE_MESSAGE);
+    }
+  }
+
+  /**
+   * Prints a debug message if debug output is enabled.
+   *
+   * @param message
+   *          debug message
+   */
+  private void debug(final String message)
+  {
+    if (DEBUG)
+    {
+      System.out.println(message);
     }
   }
 
@@ -265,8 +281,8 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
         List<StreetSegment> orderedPath = buildOrderedPath(currentPath, panel.getCurrentSegment(),
             destinationSegment);
         matcher.setActiveRoute(orderedPath);
-        System.out.println("[App] Route path size=" + currentPath.size() + " ordered="
-            + orderedPath.size() + " lock=" + matcher.isRouteLockEnabled());
+        debug("[App] Route path size=" + currentPath.size() + " ordered=" + orderedPath.size()
+            + " lock=" + matcher.isRouteLockEnabled());
       }
 
       document.setHighlighted(currentPath);
@@ -370,8 +386,8 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
     // InputStream is = gps.getInputStream();
 
     // Use GPS simulator for testing instead.
-    GPSSimulator gpsSim = new GPSSimulator("rockingham.gps");
-    gpsSim.setDelay(20);
+    GPSSimulator gpsSim = new GPSSimulator("recalc.gps");
+    gpsSim.setDelay(80);
 
     InputStream is = gpsSim.getInputStream();
 
@@ -388,7 +404,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
 
     if (gpsPath != null)
     {
-      System.out.println("GPS path: " + gpsPath);
+      debug("GPS path: " + gpsPath);
     }
   }
 
@@ -436,7 +452,7 @@ public class App implements Runnable, ActionListener, StreetSegmentObserver, Pro
 
         if (routeRecalculator.shouldRecalculate(currentSegment))
         {
-          System.out.println("Off route. Recalculating...");
+          debug("Off route. Recalculating...");
           routeRecalculator.resetOffRouteCount();
           calculatePathFrom(currentSegment, false);
         }
