@@ -22,10 +22,15 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
 {
   private static final long serialVersionUID = 1L;
 
+  private static final double DOT_DIAMETER = 8.0;
+  private static final double DOT_OFFSET = 4.0;
+  private static final double VIEW_SIZE = 2.0;
+  private static final double VIEW_OFFSET = 1.0;
+
   private GPGGASentence current;
   private double[] currentProjected;
-  private MapProjection projection;
   private MapMatcher mapMatcher;
+  private MapProjection projection;
   private StreetSegment currentSegment;
 
   /**
@@ -54,7 +59,7 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
    * @param projection
    *          The map projection to use
    * @param mapMatcher
-   *          The map matcher used to snap GPS positions to roads (optional)
+   *          The map matcher used to snap GPS positions to roads
    */
   public DynamicCartographyPanel(final CartographyDocument<T> model,
       final Cartographer<T> cartographer, final MapProjection projection,
@@ -71,7 +76,7 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
   /**
    * Gets the current map-matched street segment.
    *
-   * @return The current segment, or null if none is available yet
+   * @return The current segment, or null if none is available
    */
   public StreetSegment getCurrentSegment()
   {
@@ -100,28 +105,7 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
   {
     if ((data != null) && data.startsWith("$GPGGA"))
     {
-      try
-      {
-        current = GPGGASentence.parseGPGGA(data);
-        double[] projected = projection.forward(new double[] {current.getLongitude(),
-            current.getLatitude()});
-        if (mapMatcher != null)
-        {
-          MapMatcher.MapMatchResult result = mapMatcher.match(projected);
-          currentProjected = result.getPoint();
-          currentSegment = result.getSegment();
-        }
-        else
-        {
-          currentProjected = projected;
-          currentSegment = null;
-        }
-        repaint();
-      }
-      catch (IllegalArgumentException e)
-      {
-        // Ignore bad GPS data
-      }
+      updateCurrentPosition(data);
     }
   }
 
@@ -136,25 +120,69 @@ public class DynamicCartographyPanel<T> extends CartographyPanel<T> implements G
   {
     if (currentProjected != null)
     {
-      zoomStack.set(0, new Rectangle2D.Double(currentProjected[0] - 1.0, currentProjected[1] - 1.0,
-          2.0, 2.0));
+      zoomStack.set(0, new Rectangle2D.Double(currentProjected[0] - VIEW_OFFSET,
+          currentProjected[1] - VIEW_OFFSET, VIEW_SIZE, VIEW_SIZE));
     }
 
     super.paint(g);
 
-    if (currentProjected == null)
+    if (currentProjected != null)
     {
-      return;
+      paintCurrentPosition(g);
     }
+  }
 
+  /**
+   * Updates the current projected position from a GPS sentence.
+   *
+   * @param data
+   *          The GPS sentence
+   */
+  private void updateCurrentPosition(final String data)
+  {
+    try
+    {
+      current = GPGGASentence.parseGPGGA(data);
+      double[] projected = projection
+          .forward(new double[] {current.getLongitude(), current.getLatitude()});
+
+      if (mapMatcher != null)
+      {
+        MapMatcher.MapMatchResult result = mapMatcher.match(projected);
+        currentProjected = result.getPoint();
+        currentSegment = result.getSegment();
+      }
+      else
+      {
+        currentProjected = projected;
+        currentSegment = null;
+      }
+
+      repaint();
+    }
+    catch (IllegalArgumentException e)
+    {
+      currentProjected = null;
+      currentSegment = null;
+    }
+  }
+
+  /**
+   * Paints the current projected GPS position.
+   *
+   * @param g
+   *          The Graphics object
+   */
+  private void paintCurrentPosition(final Graphics g)
+  {
     Graphics2D g2 = (Graphics2D) g;
     double[] screen = new double[2];
 
-    displayTransform.getTransform(g2.getClipBounds(), zoomStack.getFirst()).transform(currentProjected,
-        0, screen, 0, 1);
+    displayTransform.getTransform(g2.getClipBounds(), zoomStack.getFirst())
+        .transform(currentProjected, 0, screen, 0, 1);
 
     g2.setColor(Color.RED);
-    g2.fill(new Ellipse2D.Double(screen[0] - 4.0, screen[1] - 4.0, 8.0, 8.0));
+    g2.fill(new Ellipse2D.Double(screen[0] - DOT_OFFSET, screen[1] - DOT_OFFSET, DOT_DIAMETER,
+        DOT_DIAMETER));
   }
-
 }

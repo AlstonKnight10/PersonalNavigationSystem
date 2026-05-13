@@ -19,6 +19,9 @@ public class RouteRecalculator
   private int offRouteCount;
   private Timer timer;
 
+  /**
+   * Constructs a RouteRecalculator.
+   */
   public RouteRecalculator()
   {
     this.currentPath = null;
@@ -27,6 +30,12 @@ public class RouteRecalculator
     this.timer = null;
   }
 
+  /**
+   * Sets the destination segment.
+   *
+   * @param destinationSegment
+   *          The destination segment
+   */
   public void setDestinationSegment(final StreetSegment destinationSegment)
   {
     this.destinationSegment = destinationSegment;
@@ -34,22 +43,45 @@ public class RouteRecalculator
     this.offRouteCount = 0;
   }
 
+  /**
+   * Gets the destination segment.
+   *
+   * @return The destination segment
+   */
   public StreetSegment getDestinationSegment()
   {
     return destinationSegment;
   }
 
+  /**
+   * Sets the current path.
+   *
+   * @param currentPath
+   *          The current path
+   */
   public void setCurrentPath(final Map<String, StreetSegment> currentPath)
   {
     this.currentPath = currentPath;
     this.offRouteCount = 0;
   }
 
+  /**
+   * Gets the current path.
+   *
+   * @return The current path
+   */
   public Map<String, StreetSegment> getCurrentPath()
   {
     return currentPath;
   }
 
+  /**
+   * Determines whether the route should be recalculated.
+   *
+   * @param currentSegment
+   *          The current street segment
+   * @return true if the route should be recalculated
+   */
   public boolean shouldRecalculate(final StreetSegment currentSegment)
   {
     if (currentSegment == null || destinationSegment == null)
@@ -72,6 +104,9 @@ public class RouteRecalculator
     return offRouteCount >= OFF_ROUTE_LIMIT;
   }
 
+  /**
+   * Resets the off-route counter.
+   */
   public void resetOffRouteCount()
   {
     offRouteCount = 0;

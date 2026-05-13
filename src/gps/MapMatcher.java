@@ -88,7 +88,8 @@ public class MapMatcher
   /**
    * Compatibility no-op for code paths that provide route context.
    *
-   * @param route ignored
+   * @param route
+   *          ignored route
    */
   public void setActiveRoute(final List<StreetSegment> route)
   {
@@ -106,11 +107,11 @@ public class MapMatcher
   }
 
   /**
-   * Snaps a point in projected coordinates (km) to the nearest road segment.
+   * Snaps a point in projected coordinates to the nearest road segment.
    *
    * @param point
-   *          projected point [x, y]
-   * @return snapped projected point [x, y]
+   *          projected point as [x, y]
+   * @return snapped projected point as [x, y]
    */
   public double[] snap(final double[] point)
   {
@@ -121,7 +122,7 @@ public class MapMatcher
    * Returns a full map-match result including snapped point and matched segment.
    *
    * @param point
-   *          projected point [x, y]
+   *          projected point as [x, y]
    * @return map-match result
    */
   public MapMatchResult match(final double[] point)
@@ -149,6 +150,15 @@ public class MapMatcher
     return matchAgainstCandidates(point[0], point[1], candidateIndexes);
   }
 
+  /**
+   * Matches a projected point against all known road segments.
+   *
+   * @param px
+   *          projected x-coordinate
+   * @param py
+   *          projected y-coordinate
+   * @return best map-match result
+   */
   private MapMatchResult matchAgainstAll(final double px, final double py)
   {
     double bestDistanceSquared = Double.POSITIVE_INFINITY;
@@ -174,6 +184,17 @@ public class MapMatcher
     return new MapMatchResult(bestPoint, bestSegment, Math.sqrt(bestDistanceSquared));
   }
 
+  /**
+   * Matches a projected point against candidate road segments.
+   *
+   * @param px
+   *          projected x-coordinate
+   * @param py
+   *          projected y-coordinate
+   * @param candidateIndexes
+   *          indexes of candidate road segments
+   * @return best map-match result
+   */
   private MapMatchResult matchAgainstCandidates(final double px, final double py,
       final Set<Integer> candidateIndexes)
   {
@@ -201,6 +222,15 @@ public class MapMatcher
     return new MapMatchResult(bestPoint, bestSegment, Math.sqrt(bestDistanceSquared));
   }
 
+  /**
+   * Collects road-segment indexes near a grid cell.
+   *
+   * @param centerX
+   *          center cell x-coordinate
+   * @param centerY
+   *          center cell y-coordinate
+   * @return nearby road-segment indexes
+   */
   private Set<Integer> collectCandidateIndexes(final int centerX, final int centerY)
   {
     Set<Integer> candidates = new HashSet<Integer>();
@@ -234,6 +264,16 @@ public class MapMatcher
     return candidates;
   }
 
+  /**
+   * Adds candidates from a grid cell to the candidate set.
+   *
+   * @param candidates
+   *          candidate set to update
+   * @param cellX
+   *          cell x-coordinate
+   * @param cellY
+   *          cell y-coordinate
+   */
   private void addCellCandidates(final Set<Integer> candidates, final int cellX, final int cellY)
   {
     List<Integer> bucket = grid.get(key(cellX, cellY));
@@ -243,6 +283,14 @@ public class MapMatcher
     }
   }
 
+  /**
+   * Adds all line segments from a shape.
+   *
+   * @param shape
+   *          street-segment shape
+   * @param owner
+   *          street segment that owns the shape
+   */
   private void addShapeSegments(final Shape shape, final StreetSegment owner)
   {
     PathIterator iterator = shape.getPathIterator(null);
@@ -288,6 +336,20 @@ public class MapMatcher
     }
   }
 
+  /**
+   * Adds a road segment to the segment list and spatial grid.
+   *
+   * @param ax
+   *          start x-coordinate
+   * @param ay
+   *          start y-coordinate
+   * @param bx
+   *          end x-coordinate
+   * @param by
+   *          end y-coordinate
+   * @param owner
+   *          street segment that owns the road segment
+   */
   private void addRoadSegment(final double ax, final double ay, final double bx, final double by,
       final StreetSegment owner)
   {
@@ -316,16 +378,35 @@ public class MapMatcher
     }
   }
 
+  /**
+   * Converts a projected coordinate to a grid cell coordinate.
+   *
+   * @param value
+   *          projected coordinate value
+   * @return grid cell coordinate
+   */
   private int toCell(final double value)
   {
     return (int) Math.floor(value / cellSizeKm);
   }
 
+  /**
+   * Builds a unique key from a grid cell coordinate.
+   *
+   * @param cellX
+   *          cell x-coordinate
+   * @param cellY
+   *          cell y-coordinate
+   * @return grid-cell key
+   */
   private long key(final int cellX, final int cellY)
   {
     return (((long) cellX) << 32) ^ (cellY & 0xffffffffL);
   }
 
+  /**
+   * Represents one straight line segment from a street shape.
+   */
   private static class LineSegment2D
   {
     private final double ax;
@@ -334,6 +415,20 @@ public class MapMatcher
     private final double by;
     private final StreetSegment owner;
 
+    /**
+     * Constructs a line segment.
+     *
+     * @param ax
+     *          start x-coordinate
+     * @param ay
+     *          start y-coordinate
+     * @param bx
+     *          end x-coordinate
+     * @param by
+     *          end y-coordinate
+     * @param owner
+     *          street segment that owns this line segment
+     */
     private LineSegment2D(final double ax, final double ay, final double bx, final double by,
         final StreetSegment owner)
     {
@@ -344,6 +439,15 @@ public class MapMatcher
       this.owner = owner;
     }
 
+    /**
+     * Finds the closest point on this line segment.
+     *
+     * @param px
+     *          projected x-coordinate
+     * @param py
+     *          projected y-coordinate
+     * @return closest point as [x, y]
+     */
     private double[] closestPoint(final double px, final double py)
     {
       double abx = bx - ax;
@@ -372,12 +476,25 @@ public class MapMatcher
     }
   }
 
+  /**
+   * Stores the result of matching a projected point to a street segment.
+   */
   public static class MapMatchResult
   {
     private final double[] point;
     private final StreetSegment segment;
     private final double distanceKm;
 
+    /**
+     * Constructs a map-match result.
+     *
+     * @param point
+     *          snapped projected point as [x, y]
+     * @param segment
+     *          matched street segment
+     * @param distanceKm
+     *          distance from the original point to the snapped point
+     */
     private MapMatchResult(final double[] point, final StreetSegment segment,
         final double distanceKm)
     {
@@ -386,16 +503,31 @@ public class MapMatcher
       this.distanceKm = distanceKm;
     }
 
+    /**
+     * Gets the snapped point.
+     *
+     * @return snapped projected point as [x, y]
+     */
     public double[] getPoint()
     {
       return new double[] {point[0], point[1]};
     }
 
+    /**
+     * Gets the matched street segment.
+     *
+     * @return matched street segment, or null if unavailable
+     */
     public StreetSegment getSegment()
     {
       return segment;
     }
 
+    /**
+     * Gets the distance from the original point to the snapped point.
+     *
+     * @return distance in kilometers
+     */
     public double getDistanceKm()
     {
       return distanceKm;
