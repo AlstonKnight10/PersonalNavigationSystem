@@ -3,6 +3,7 @@ package gps;
 import java.awt.Shape;
 import java.awt.geom.PathIterator;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,10 +21,18 @@ public class MapMatcher
   private static final double DEFAULT_CELL_SIZE_KM = 0.25;
   private static final int DEFAULT_MAX_EXPANSION_RINGS = 8;
 
+  private static final double ROUTE_BIAS_PENALTY_KM = 0.03;
+  private static final double OFF_ROUTE_UNLOCK_DISTANCE_KM = 0.05;
+  private static final int OFF_ROUTE_UNLOCK_FIXES = 4;
+  private static final double RELOCK_DISTANCE_KM = 0.02;
+
   private final List<LineSegment2D> roadSegments;
   private final Map<Long, List<Integer>> grid;
   private final double cellSizeKm;
   private final int maxExpansionRings;
+  private Set<String> activeRouteSegmentIDs;
+  private boolean routeBiasEnabled;
+  private int offRouteFixCount;
   private StreetSegment currentSegment;
 
   /**
@@ -67,6 +76,9 @@ public class MapMatcher
     this.grid = new HashMap<Long, List<Integer>>();
     this.cellSizeKm = cellSizeKm;
     this.maxExpansionRings = maxExpansionRings;
+    this.activeRouteSegmentIDs = Collections.emptySet();
+    this.routeBiasEnabled = false;
+    this.offRouteFixCount = 0;
     this.currentSegment = null;
 
     for (StreetSegment segment : document)
@@ -93,7 +105,34 @@ public class MapMatcher
    */
   public void setActiveRoute(final List<StreetSegment> route)
   {
-    // Intentionally ignored in this simplified matcher version.
+    if (route == null || route.isEmpty())
+    {
+      activeRouteSegmentIDs = Collections.emptySet();
+      routeBiasEnabled = false;
+      offRouteFixCount = 0;
+      return;
+    }
+
+    Set<String> ids = new HashSet<String>();
+    for (StreetSegment segment : route)
+    {
+      if (segment != null)
+      {
+        ids.add(segment.getID());
+      }
+    }
+
+    if (ids.isEmpty())
+    {
+      activeRouteSegmentIDs = Collections.emptySet();
+      routeBiasEnabled = false;
+      offRouteFixCount = 0;
+      return;
+    }
+
+    activeRouteSegmentIDs = ids;
+    routeBiasEnabled = true;
+    offRouteFixCount = 0;
   }
 
   /**
@@ -103,7 +142,7 @@ public class MapMatcher
    */
   public boolean isRouteLockEnabled()
   {
-    return false;
+    return routeBiasEnabled && !activeRouteSegmentIDs.isEmpty();
   }
 
   /**
@@ -144,10 +183,10 @@ public class MapMatcher
     Set<Integer> candidateIndexes = collectCandidateIndexes(cellX, cellY);
     if (candidateIndexes.isEmpty())
     {
-      return matchAgainstAll(point[0], point[1]);
+      return updateRouteBiasState(matchAgainstAll(point[0], point[1]));
     }
 
-    return matchAgainstCandidates(point[0], point[1], candidateIndexes);
+    return updateRouteBiasState(matchAgainstCandidates(point[0], point[1], candidateIndexes));
   }
 
   /**
@@ -162,8 +201,10 @@ public class MapMatcher
   private MapMatchResult matchAgainstAll(final double px, final double py)
   {
     double bestDistanceSquared = Double.POSITIVE_INFINITY;
+    double bestScore = Double.POSITIVE_INFINITY;
     double[] bestPoint = new double[] {px, py};
     StreetSegment bestSegment = null;
+    boolean applyBias = shouldApplyRouteBias();
 
     for (LineSegment2D segment : roadSegments)
     {
@@ -171,9 +212,12 @@ public class MapMatcher
       double dx = candidate[0] - px;
       double dy = candidate[1] - py;
       double distanceSquared = dx * dx + dy * dy;
+      double distanceKm = Math.sqrt(distanceSquared);
+      double score = score(distanceKm, segment.owner, applyBias);
 
-      if (distanceSquared < bestDistanceSquared)
+      if (score < bestScore)
       {
+        bestScore = score;
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
         bestSegment = segment.owner;
@@ -199,8 +243,10 @@ public class MapMatcher
       final Set<Integer> candidateIndexes)
   {
     double bestDistanceSquared = Double.POSITIVE_INFINITY;
+    double bestScore = Double.POSITIVE_INFINITY;
     double[] bestPoint = new double[] {px, py};
     StreetSegment bestSegment = null;
+    boolean applyBias = shouldApplyRouteBias();
 
     for (Integer index : candidateIndexes)
     {
@@ -209,9 +255,12 @@ public class MapMatcher
       double dx = candidate[0] - px;
       double dy = candidate[1] - py;
       double distanceSquared = dx * dx + dy * dy;
+      double distanceKm = Math.sqrt(distanceSquared);
+      double score = score(distanceKm, segment.owner, applyBias);
 
-      if (distanceSquared < bestDistanceSquared)
+      if (score < bestScore)
       {
+        bestScore = score;
         bestDistanceSquared = distanceSquared;
         bestPoint = candidate;
         bestSegment = segment.owner;
@@ -222,15 +271,72 @@ public class MapMatcher
     return new MapMatchResult(bestPoint, bestSegment, Math.sqrt(bestDistanceSquared));
   }
 
-  /**
-   * Collects road-segment indexes near a grid cell.
-   *
-   * @param centerX
-   *          center cell x-coordinate
-   * @param centerY
-   *          center cell y-coordinate
-   * @return nearby road-segment indexes
-   */
+  private boolean shouldApplyRouteBias()
+  {
+    return routeBiasEnabled && !activeRouteSegmentIDs.isEmpty();
+  }
+
+  private double score(final double distanceKm, final StreetSegment segment,
+      final boolean applyBias)
+  {
+    if (!applyBias)
+    {
+      return distanceKm;
+    }
+
+    if (segment == null || !activeRouteSegmentIDs.contains(segment.getID()))
+    {
+      return distanceKm + ROUTE_BIAS_PENALTY_KM;
+    }
+
+    return distanceKm;
+  }
+
+  private MapMatchResult updateRouteBiasState(final MapMatchResult result)
+  {
+    if (activeRouteSegmentIDs.isEmpty())
+    {
+      routeBiasEnabled = false;
+      offRouteFixCount = 0;
+      return result;
+    }
+
+    StreetSegment segment = (result == null) ? null : result.getSegment();
+    double distanceKm = (result == null) ? Double.POSITIVE_INFINITY : result.getDistanceKm();
+
+    if (routeBiasEnabled)
+    {
+      if (segment != null && activeRouteSegmentIDs.contains(segment.getID()))
+      {
+        offRouteFixCount = 0;
+      }
+      else if (distanceKm > OFF_ROUTE_UNLOCK_DISTANCE_KM)
+      {
+        offRouteFixCount++;
+        if (offRouteFixCount >= OFF_ROUTE_UNLOCK_FIXES)
+        {
+          routeBiasEnabled = false;
+          offRouteFixCount = 0;
+        }
+      }
+      else
+      {
+        offRouteFixCount = 0;
+      }
+    }
+    else
+    {
+      if (segment != null && activeRouteSegmentIDs.contains(segment.getID())
+          && distanceKm <= RELOCK_DISTANCE_KM)
+      {
+        routeBiasEnabled = true;
+        offRouteFixCount = 0;
+      }
+    }
+
+    return result;
+  }
+
   private Set<Integer> collectCandidateIndexes(final int centerX, final int centerY)
   {
     Set<Integer> candidates = new HashSet<Integer>();
